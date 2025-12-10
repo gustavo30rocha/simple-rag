@@ -1,6 +1,6 @@
 # Simple RAG System
 
-A simple, open-source Retrieval-Augmented Generation (RAG) system that allows you to query your documents using natural language. Built with LangChain, ChromaDB, and Ollama for a fully local, privacy-preserving solution.
+A simple, open-source Retrieval-Augmented Generation (RAG) system that allows you to query your documents using natural language. Built with LangChain, ChromaDB, and Ollama for a fully local solution.
 
 ## Features
 
@@ -26,7 +26,7 @@ A simple, open-source Retrieval-Augmented Generation (RAG) system that allows yo
 
 1. Clone the repository:
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/gustavo30rocha/simple-rag.git
 cd simple-rag
 ```
 
@@ -38,7 +38,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install langchain langchain-community langchain-chroma langchain-huggingface langchain-ollama chromadb sentence-transformers pypdf
+pip install langchain langchain-community langchain-chroma langchain-huggingface langchain-ollama chromadb sentence-transformers pypdf "unstructured[md]"
 ```
 
 4. Pull an Ollama model (if not already done):
@@ -83,10 +83,10 @@ python create_database.py
 ```
 
 This will:
-- Load all PDF and Markdown files from the `data/` directory (recursively)
-- Split documents into chunks (1000 characters with 30 character overlap)
+- Load all PDF and Markdown files from the `data/` directory
+- Split documents into chunks (1000 characters with 150 character overlap)
 - Generate embeddings using BAAI/bge-small-en-v1.5
-- Store everything in ChromaDB with cosine similarity indexing
+- Store everything in ChromaDB
 - Only add new documents if the database already exists (incremental updates)
 
 ### 3. Query Your Documents
@@ -118,7 +118,7 @@ python query_data.py "How does memory forensics work?" --k 10
 
 ## How It Works
 
-1. **Document Processing**: Documents are split into manageable chunks (1000 chars with 30 char overlap)
+1. **Document Processing**: Documents are split into manageable chunks (1000 chars with 150 char overlap)
 2. **Embedding Generation**: Each chunk is converted to a vector using BAAI/bge-small-en-v1.5
 3. **Vector Storage**: Embeddings are stored in ChromaDB
 4. **Query Processing**: 
@@ -126,7 +126,7 @@ python query_data.py "How does memory forensics work?" --k 10
    - ChromaDB finds the most similar document chunks using cosine distance
    - Cosine distance (0-2 range) is converted to cosine similarity (-1 to 1), then normalized to (0-1)
    - Formula: `similarity = 1 - distance`, then `normalized = (similarity + 1) / 2`
-5. **Response Generation**: The LLM (Ollama) generates an answer based on the retrieved context
+5. **Response Generation**: The LLM generates an answer based on the retrieved context
 
 ## Configuration
 
@@ -151,7 +151,7 @@ Chunking parameters in `create_database.py`:
 ```python
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,      # Characters per chunk
-    chunk_overlap=30,     # Overlap between chunks
+    chunk_overlap=150,     # Overlap between chunks
 )
 ```
 
@@ -204,7 +204,7 @@ Both PDF and Markdown files are loaded recursively from subdirectories, so you c
 - Verify the model is pulled: `ollama list`
 - Pull the model if needed: `ollama pull llama3:8b`
 
-### Low relevance scores
+### Low scores
 - The embedding model might not match your domain
 - Consider using a larger embedding model
 - Adjust chunk size/overlap for better context
@@ -217,12 +217,4 @@ Potential enhancements:
 - Hybrid search (semantic + keyword)
 - Better prompt engineering
 - Response streaming
-
-## License
-
-[Your License Here]
-
-## Contributing
-
-[Your Contributing Guidelines Here]
 
