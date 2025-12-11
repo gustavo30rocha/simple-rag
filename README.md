@@ -5,7 +5,7 @@ A simple, open-source Retrieval-Augmented Generation (RAG) system that allows yo
 ## Features
 
 - 📄 **Multi-format Support**: Loads PDF and Markdown files from your data directory
-- 🔍 **Semantic Search**: Uses state-of-the-art embedding models for accurate document retrieval
+- 🔍 **Hybrid Search**: Combines semantic (vector) and keyword/lexical (BM25) search for better retrieval
 - 🤖 **Local LLM**: Powered by Ollama for completely offline operation
 - 💾 **Persistent Storage**: ChromaDB vector database for efficient similarity search
 - 🔄 **Incremental Updates**: Automatically detects and adds new documents without rebuilding the entire database
@@ -14,6 +14,7 @@ A simple, open-source Retrieval-Augmented Generation (RAG) system that allows yo
 
 - **Embeddings**: `BAAI/bge-small-en-v1.5` (HuggingFace) - High-quality, open-source embedding model
 - **Vector Database**: ChromaDB with cosine distance indexing
+- **Keyword Search**: BM25 algorithm for exact term matching
 - **LLM**: Ollama (supports any Ollama model)
 - **Framework**: LangChain
 
@@ -38,7 +39,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. Install dependencies:
 ```bash
-pip install langchain langchain-community langchain-chroma langchain-huggingface langchain-ollama chromadb sentence-transformers pypdf "unstructured[md]"
+pip install langchain langchain-community langchain-chroma langchain-huggingface langchain-ollama chromadb sentence-transformers pypdf "unstructured[md]" rank-bm25 wikipedia
 ```
 
 4. Pull an Ollama model (if not already done):
@@ -55,14 +56,23 @@ simple-rag/
 │   ├── *.md
 │   └── subdirectories/   # Supports recursive loading
 ├── chroma/               # ChromaDB database (auto-generated)
+│   ├── bm25_index.pkl   # Pre-built BM25 index (auto-generated)
+│   └── bm25_docs.pkl    # Document references for BM25 (auto-generated)
 ├── create_database.py    # Script to build/update the vector database
 ├── query_data.py         # Script to query your documents
+├── scrape_wikipedia.py   # Script to download Wikipedia articles
 └── README.md
 ```
 
 ## Usage
 
 ### 1. Prepare Your Documents
+
+You can either:
+- **Option A**: Place your PDF and Markdown files in the `data/` directory
+- **Option B**: Use the Wikipedia scraper to download articles for testing
+
+#### Option A: Manual Document Placement
 
 Place your PDF and Markdown files in the `data/` directory. The system will recursively search all subdirectories.
 
@@ -73,6 +83,16 @@ data/
 └── subfolder/
     └── document3.pdf
 ```
+
+#### Option B: Download Wikipedia Articles
+
+Use the included scraper to quickly build a test dataset:
+
+```bash
+python scrape_wikipedia.py
+```
+
+This will download Wikipedia articles specified in the `TOPICS` list and save them as Markdown files in the `data/` directory. You can customize the topics in `scrape_wikipedia.py`.
 
 ### 2. Create the Database
 
@@ -86,7 +106,8 @@ This will:
 - Load all PDF and Markdown files from the `data/` directory
 - Split documents into chunks (1000 characters with 150 character overlap)
 - Generate embeddings using BAAI/bge-small-en-v1.5
-- Store everything in ChromaDB
+- Build a BM25 keyword search index
+- Store everything in ChromaDB and save BM25 index to disk
 - Only add new documents if the database already exists (incremental updates)
 
 ### 3. Query Your Documents
@@ -99,8 +120,14 @@ python query_data.py "Your question here"
 
 **Examples:**
 ```bash
-# Basic query
+# Basic query (vector search only)
 python query_data.py "What type of evidence can we find in operating systems?"
+
+# Hybrid search (combines vector + keyword search)
+python query_data.py "Python programming" --hybrid
+
+# Hybrid search with custom weight (70% vector, 30% keyword)
+python query_data.py "Python machine learning" --hybrid --hybrid-weight 0.7
 
 # Use a different Ollama model
 python query_data.py "Explain file carving techniques" --model llama3.1
@@ -115,8 +142,12 @@ python query_data.py "How does memory forensics work?" --k 10
 - `query_text` (required): Your question
 - `--model`: Ollama model to use (default: `llama3:8b`)
 - `--k`: Number of documents to retrieve (default: `5`)
+- `--hybrid`: Enable hybrid search (combines vector + keyword search)
+- `--hybrid-weight`: Weight for hybrid search (0.0 = only keyword, 1.0 = only vector, default: `0.5`)
 
 ## How It Works
+
+### Vector Search (Default)
 
 1. **Document Processing**: Documents are split into manageable chunks (1000 chars with 150 char overlap)
 2. **Embedding Generation**: Each chunk is converted to a vector using BAAI/bge-small-en-v1.5
@@ -127,6 +158,23 @@ python query_data.py "How does memory forensics work?" --k 10
    - Cosine distance (0-2 range) is converted to cosine similarity (-1 to 1), then normalized to (0-1)
    - Formula: `similarity = 1 - distance`, then `normalized = (similarity + 1) / 2`
 5. **Response Generation**: The LLM generates an answer based on the retrieved context
+
+### Hybrid Search (Optional)
+
+When `--hybrid` is enabled, the system combines two search methods:
+
+1. **Vector Search (Dense)**: Semantic similarity using embeddings (finds conceptually similar content)
+2. **BM25 Search (Sparse)**: Keyword matching using the BM25 algorithm (finds exact term matches)
+3. **Score Combination**: Both scores are normalized to 0-1 range using min-max normalization, then combined:
+   - `combined_score = (hybrid_weight × vector_score) + ((1 - hybrid_weight) × bm25_score)`
+4. **Result Merging**: Top results from both methods are merged and re-ranked by combined score
+5. **Response Generation**: The LLM generates an answer based on the hybrid-retrieved context
+
+**Benefits of Hybrid Search:**
+- Better for queries with exact keywords (e.g., "Python", "REST API")
+- Still maintains semantic understanding
+- Combines the strengths of both approaches
+- Configurable weighting between semantic and keyword matching
 
 ## Configuration
 
@@ -184,9 +232,18 @@ The system converts cosine distance to normalized similarity scores:
 
 ## Features in Detail
 
+### Hybrid Search
+
+Hybrid search combines semantic (vector) and keyword (BM25) retrieval for improved results:
+
+- **When to use**: Queries with specific terms, technical terminology, or when you need both semantic understanding and exact keyword matching
+- **BM25 Index**: Built once during database creation and saved to disk for fast loading during queries
+- **Normalization**: Both vector and BM25 scores use min-max normalization to ensure fair combination
+- **Weighting**: Adjust `--hybrid-weight` to balance between semantic (1.0) and keyword (0.0) search
+
 ### Incremental Updates
 
-The system automatically detects new documents and only adds them to the database, avoiding full rebuilds. Chunk IDs are generated based on source file, page number, and chunk index (format: `source:page:chunk_index`).
+The system automatically detects new documents and only adds them to the database, avoiding full rebuilds. Chunk IDs are generated based on source file, page number, and chunk index (format: `source:page:chunk_index`). The BM25 index is automatically rebuilt when new documents are added.
 
 ## Troubleshooting
 
@@ -205,12 +262,16 @@ The system automatically detects new documents and only adds them to the databas
 - Consider using a larger embedding model
 - Adjust chunk size/overlap for better context
 
+### BM25 index not found (hybrid search)
+- Run `python create_database.py` to build the BM25 index
+- Ensure the `chroma/` directory exists and contains `bm25_index.pkl` and `bm25_docs.pkl`
+- The system will fall back to vector-only search if the index is missing
+
 ## Future Improvements
 
 Potential enhancements:
 - Multi-query retrieval for better coverage
 - Reranking with cross-encoders
-- Hybrid search (semantic + keyword)
 - Better prompt engineering
 - Response streaming
 

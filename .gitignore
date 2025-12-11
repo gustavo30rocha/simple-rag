@@ -30,7 +30,7 @@ chroma/
 Thumbs.db
 
 # Data files (optional - uncomment if you don't want to commit your documents)
-# data/
+data/
 
 # Environment variables
 .env

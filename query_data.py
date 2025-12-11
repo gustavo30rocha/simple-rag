@@ -126,7 +126,7 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.5):
     """
     # Load BM25 index and document references
     if not os.path.exists(BM25_INDEX_PATH) or not os.path.exists(BM25_DOCS_PATH):
-        print("⚠️  BM25 index not found. Please run create_database.py first.")
+        print("BM25 index not found. Please run create_database.py first.")
         print("Falling back to vector search only.")
         raw_results = db.similarity_search_with_score(query_text, k=k)
         return [(doc, distance_to_similarity(score)) for doc, score in raw_results]
@@ -157,7 +157,7 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.5):
                 for score in bm25_scores_list
             ]
         else:
-            # All scores are the same, set all to 0.5 (or 1.0, your choice)
+            # All scores are the same, set all to 1.0
             bm25_scores_normalized = [1.0] * len(bm25_scores_list)
     
     # Create BM25 score map by document content
@@ -208,5 +208,6 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.5):
     
     # Return top k results
     return results[:k]
+    
 if __name__ == "__main__":
     main()
