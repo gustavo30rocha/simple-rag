@@ -188,10 +188,6 @@ The system converts cosine distance to normalized similarity scores:
 
 The system automatically detects new documents and only adds them to the database, avoiding full rebuilds. Chunk IDs are generated based on source file, page number, and chunk index (format: `source:page:chunk_index`).
 
-### Recursive Document Loading
-
-Both PDF and Markdown files are loaded recursively from subdirectories, so you can organize your documents in folders.
-
 ## Troubleshooting
 
 ### "Unable to find matching results"
