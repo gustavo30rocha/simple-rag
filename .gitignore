@@ -42,3 +42,7 @@ data/
 # Logs
 *.log
 
+# Test results
+test_results_*.json
+*.pytest_cache
+
