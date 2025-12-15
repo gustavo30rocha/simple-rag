@@ -3,7 +3,7 @@ from query_data import query_rag
 from langchain_ollama import ChatOllama
 from typing import Optional
 
-# Note: The evaluation is done with a LLM, so it is perfect. 
+# Note: The evaluation is done with a LLM, so it is not perfect
 EVAL_PROMPT = """
 Expected key information: {expected_response}
 Actual response: {actual_response}
