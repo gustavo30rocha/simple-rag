@@ -39,14 +39,14 @@ python query_data.py "Your question" --hybrid
 
 ## Step-by-Step Overview
 
-- **Step 1: Setup & Data** — Load PDF/Markdown files; chunk with overlap; generate unique IDs
+- **Step 1: Setup & Data** — Load PDF/Markdown files
 - **Step 2: Embeddings & Storage** — Generate embeddings; store in ChromaDB; build BM25 index
 - **Step 3: Hybrid Retriever** — Combine vector (dense) with BM25 (sparse); return top K
 - **Step 4: LLM Generation** — Generate answers grounded in retrieved context
 
 ### Step 1: Setup & Data
 
-**Design Rationale**: We use LangChain's document loaders for ingestion to leverage proven, well-maintained parsers while keeping the pipeline straightforward and extensible.
+**Design Rationale**: Used LangChain's document loaders for ingestion to leverage proven, well-maintained parsers while keeping the pipeline straightforward and extensible.
 
 **Document Loading**:
 - **PDF**: `PyPDFDirectoryLoader` recursively loads PDFs from `data/` directory
@@ -93,7 +93,7 @@ python query_data.py "Your question" --hybrid
 
 ### Step 3: Hybrid Retriever
 
-**Design Rationale**: After testing various retrieval approaches, we selected a hybrid method that merges semantic understanding with keyword matching. This dual-strategy approach addresses the limitations of single-method retrieval systems.
+**Design Rationale**: After testing various retrieval approaches, a hybrid method that merges semantic understanding with keyword matching was selected. This dual-strategy approach addresses the limitations of single-method retrieval systems.
 
 **Why Not Dense-Only?**
 While vector embeddings excel at understanding semantic relationships and context, they struggle with:
@@ -165,27 +165,35 @@ The final relevance score is a weighted combination: `final_score = α × dense_
 
 **Prompt Template**:
 ```text
-You are a helpful assistant that answers questions based on the provided context documents.
+You are a helpful assistant that answers questions based ONLY on the provided context documents. Your answers must be grounded in the context provided below.
 
-Use the following pieces of context to answer the question. If you don't know the answer based on the context alone, say that you don't have enough information in the provided documents to answer the question.
+## Instructions:
+1. Answer the question using ONLY information from the context provided
+2. If the context contains the answer, provide a clear and accurate response
+3. If multiple pieces of context are relevant, synthesize them into a coherent answer
+4. If the context contradicts itself, acknowledge the contradiction and present both perspectives
+5. If the context does NOT contain enough information to answer the question, explicitly state: "I don't have enough information in the provided documents to answer this question."
+6. Do NOT use any knowledge outside of the provided context
+7. Be specific and cite relevant details from the context when possible
 
-Context:
+## Context:
 {context}
 
-Question: {question}
+## Question:
+{question}
 
-Provide a clear, concise, and accurate answer based solely on the context provided above. If the context contains multiple relevant pieces of information, synthesize them into a coherent response. If the context does not contain enough information to answer the question, say "I don't have enough information in the provided documents to answer this question."
+## Answer:
 ```
 
 **Process**:
 1. Formats top K documents as context
 2. Creates prompt with context and question
 3. Invokes Ollama LLM with `temperature=0` (deterministic)
-4. Returns answer with source citations (unique source files)
+4. Returns answer with source citations
 
 **Source Attribution**:
 - Extracts sources from document metadata
-- Removes duplicates using `set()` (same document may appear in multiple chunks)
+- Removes duplicates (same document may appear in multiple chunks)
 
 ## Configuration
 
@@ -237,6 +245,51 @@ python query_data.py "How does ML work?" --hybrid --hybrid-weight 0.7
 python query_data.py "Explain databases" --k 10
 ```
 
+## Testing
+
+The system includes comprehensive unit tests with LLM-based evaluation to validate answer quality across different retrieval modes.
+
+### Running Tests
+
+```bash
+# Run all tests with default evaluation model (mistral:7b)
+python test_rag.py
+
+# Use a different model for evaluation
+python test_rag.py --eval-model llama3:8b
+```
+
+### Test Coverage
+
+**Test Types**:
+- **Positive Tests**: Verify the system correctly answers questions across various domains (anime, tech, science, history, etc.)
+- **Negative Tests**: Verify the system correctly rejects wrong information (contradictions, incorrect facts)
+
+**Retrieval Modes Tested**:
+- Vector-only search
+- BM25-only search (`hybrid_weight=0.0`)
+- Hybrid search (`hybrid_weight=0.7`)
+
+**Domains Covered**:
+- Anime & Manga (Naruto, One Piece, etc.)
+- Technical (Python, Machine Learning, SQL, REST API, etc.)
+- Science (Quantum Computing, Photosynthesis, DNA, Evolution, etc.)
+- History & Geography (World War II, Ancient Egypt, Mount Everest, etc.)
+- Technology (Blockchain, Linux, Neural Networks, etc.)
+
+### Evaluation Method
+
+Tests use **LLM-based evaluation** where a separate model (default: `mistral:7b`) evaluates whether the actual response contains the expected information. The evaluator:
+- Checks for contradictions (e.g., "centralized" vs "decentralized")
+- Validates key facts, dates, and characteristics
+- Handles different phrasings of the same information
+
+**Test Structure**:
+- Positive tests: `assert query_and_validate(...)` - should return `True`
+- Negative tests: `assert not query_and_validate(...)` - should return `False` (system correctly rejects wrong info)
+
+**Note**: LLM-based evaluation is not perfect and may occasionally misinterpret responses. Test results should be interpreted with this limitation in mind.
+
 ## Troubleshooting
 
 **BM25 index not found**: Run `python create_database.py` to build it. System falls back to vector-only if missing.
@@ -252,11 +305,12 @@ python query_data.py "Explain databases" --k 10
 - **Embeddings**: `BAAI/bge-small-en-v1.5`
 - **Vector DB**: ChromaDB
 - **Keyword Search**: BM25 algorithm (`rank-bm25`)
-- **LLM**: Ollama (any model)
+- **LLM**: Local Ollama model (any model)
 - **Framework**: LangChain
 
 ## Possible Future Improvements
 
 - Reranking with cross-encoders
 - Query expansion techniques
+- Better testing methods
 - Metadata filtering

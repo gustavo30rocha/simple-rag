@@ -3,18 +3,32 @@ from query_data import query_rag
 from langchain_ollama import ChatOllama
 from typing import Optional
 
+# Note: The evaluation is done with a LLM, so it is perfect. 
 EVAL_PROMPT = """
 Expected key information: {expected_response}
 Actual response: {actual_response}
 ---
 Task: Determine if the actual response contains the expected key information.
 
-Answer 'true' if the actual response contains the expected information (even if phrased differently).
+CRITICAL: Check for CONTRADICTIONS first. If the expected information contains specific claims (like "centralized", "compiled", "1960s", etc.) and the actual response states the OPPOSITE (like "decentralized", "interpreted", "1940s", etc.), that is a CONTRADICTION and you MUST answer 'false'.
+
+Examples of contradictions:
+- Expected: "centralized" → Actual: "decentralized" = CONTRADICTION (answer 'false')
+- Expected: "compiled" → Actual: "interpreted" = CONTRADICTION (answer 'false')
+- Expected: "1960s" → Actual: "1940s" = CONTRADICTION (answer 'false')
+
+Answer 'true' ONLY if:
+- The actual response contains ALL the expected information
+- The actual response does NOT contradict ANY part of the expected information
+- Key terms, facts, and claims in the expected response match (or are compatible with) the actual response
+
 Answer 'false' if:
-- The actual response contradicts the expected information
+- The actual response contradicts ANY part of the expected information (even if it mentions the same topic)
+- The actual response states the opposite of what is expected
+- Key facts, dates, numbers, or characteristics in the expected response are contradicted in the actual response
 - The actual response is missing key information from the expected response
 
-When answering 'false', explain what the actual response says instead of the expected information.
+When answering 'false', clearly state what contradiction you found (e.g., "Expected says X but actual says Y").
 
 Answer (true/false):
 """

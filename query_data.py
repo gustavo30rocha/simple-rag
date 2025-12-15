@@ -13,16 +13,24 @@ CHROMA_PATH = "chroma"
 BM25_INDEX_PATH = os.path.join(CHROMA_PATH, "bm25_index.pkl")
 BM25_DOCS_PATH = os.path.join(CHROMA_PATH, "bm25_docs.pkl")
 
-PROMPT_TEMPLATE = """You are a helpful assistant that answers questions based on the provided context documents.
+PROMPT_TEMPLATE = """You are a helpful assistant that answers questions based ONLY on the provided context documents. Your answers must be grounded in the context provided below.
 
-Use the following pieces of context to answer the question. If you don't know the answer based on the context alone, say that you don't have enough information in the provided documents to answer the question.
+## Instructions:
+1. Answer the question using ONLY information from the context provided
+2. If the context contains the answer, provide a clear and accurate response
+3. If multiple pieces of context are relevant, synthesize them into a coherent answer
+4. If the context contradicts itself, acknowledge the contradiction and present both perspectives
+5. If the context does NOT contain enough information to answer the question, explicitly state: "I don't have enough information in the provided documents to answer this question."
+6. Do NOT use any knowledge outside of the provided context
+7. Be specific and cite relevant details from the context when possible
 
-Context:
+## Context:
 {context}
 
-Question: {question}
+## Question:
+{question}
 
-Provide a clear, concise, and accurate answer based solely on the context provided above. If the context contains multiple relevant pieces of information, synthesize them into a coherent response. If the context does not contain enough information to answer the question, say "I don't have enough information in the provided documents to answer this question."
+## Answer:
 """
 
 def _normalize(scores):
@@ -75,6 +83,15 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.7):
     Returns:
         List of (document, combined_score) tuples, sorted by score descending
     """
+    # If hybrid_weight is 1.0 (or very close), do pure vector search
+    if hybrid_weight >= 0.999:
+        raw_results = db.similarity_search_with_score(query_text, k=k)
+        # Convert distances to similarities, then normalize
+        vector_distances = [score for _, score in raw_results]
+        vector_similarities = [distance_to_similarity(dist) for dist in vector_distances]
+        vector_scores_normalized = _normalize(vector_similarities)
+        return [(doc, score) for (doc, _), score in zip(raw_results, vector_scores_normalized)]
+    
     # Load BM25 index and document references
     if not os.path.exists(BM25_INDEX_PATH) or not os.path.exists(BM25_DOCS_PATH):
         print("BM25 index not found. Please run create_database.py first.")
@@ -114,7 +131,7 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.7):
     vector_similarities = [distance_to_similarity(dist) for dist in vector_distances]
     vector_scores_normalized = _normalize(vector_similarities)
     
-    # Create vector scores map (normalized similarity scores)
+    # Create vector scores map
     vector_scores_map = {
         doc.page_content: score
         for doc, score in zip([doc for doc, _ in vector_results], vector_scores_normalized)
@@ -197,7 +214,7 @@ def query_rag(
             for (doc, _), score in zip(raw_results, vector_scores_normalized)
         ]
 
-    # Check if we got any results
+    # Check if there are any results
     if len(results) == 0:
         answer = "I don't have enough information in the provided documents to answer this question."
         if return_sources:
