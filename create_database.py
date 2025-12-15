@@ -1,6 +1,8 @@
 import os
 import re
 import pickle
+import argparse
+import shutil
 from langchain_community.document_loaders import PyPDFDirectoryLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -13,15 +15,26 @@ CHROMA_PATH = "chroma"
 BM25_INDEX_PATH = os.path.join(CHROMA_PATH, "bm25_index.pkl")
 BM25_DOCS_PATH = os.path.join(CHROMA_PATH, "bm25_docs.pkl")
 
-#has to be the same embedding model as the query_data.py
-# Using BAAI/bge-small-en-v1.5 - better quality than MiniLM, same size
-# Trained specifically for retrieval tasks, better semantic understanding
 embeddings = HuggingFaceEmbeddings(
     model_name="BAAI/bge-small-en-v1.5"
 )
 
 def main():
-    generate_database()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Clears the database"
+    )
+    args = parser.parse_args()
+
+    if args.clear:
+        if os.path.exists(CHROMA_PATH):
+            print("Clearing database...")
+            shutil.rmtree(CHROMA_PATH)
+            os.makedirs(CHROMA_PATH)
+    else:
+        generate_database()
 
 def load_documents():
     """
@@ -58,7 +71,7 @@ def split_text(documents):
     return chunks
 
 def tokenize(text):
-    # Simple tokenizer for BM25: splits text into words
+    # Simple tokenizer for testing purposes
     tokens = re.findall(r'\b\w+\b', text.lower())
     return tokens
 
@@ -69,7 +82,6 @@ def build_bm25_index(chunks: list[Document]):
     """
     print("Building BM25 index...")
     
-    # Tokenize all chunks
     tokenized_docs = [tokenize(chunk.page_content) for chunk in chunks]
     
     # Build BM25 index
@@ -130,7 +142,7 @@ def save_to_chroma(chunks: list[Document]):
         ]
         build_bm25_index(all_chunks)
     else:
-        print("✅ No new documents to add")
+        print("No new documents to add")
         # Still rebuild index to ensure it's up to date
         all_docs_data = db.get()
         all_chunks = [
@@ -148,6 +160,7 @@ def calculate_chunk_ids(chunks):
 
     # This will create IDs like "data/xxx.pdf:6:2"
     # Page Source : Page Number : Chunk Index
+    # Only works for PDF files at the moment
 
     last_page_id = None
     current_chunk_index = 0

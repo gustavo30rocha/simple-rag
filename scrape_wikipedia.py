@@ -1,27 +1,72 @@
-# download_wikipedia.py
 import os
 import wikipedia
 import re
 
 wikipedia.set_lang("en")
 
-# Topics we want to download for our database
+# Topics to scrape (customizable)
 TOPICS = [
-    # Technical topics - good for keyword matching (sparse search)
+    # Technical topics
     "Python (programming language)",
     "Machine learning",
     "Database",
     "REST API",
     "SQL",
+    "JavaScript",
+    "Linux",
+    "Blockchain",
+    "Neural network",
+    "Git (software)",
     
-    # Anime topics - good for semantic understanding (dense search)
+    # Science & Nature
+    "Quantum computing",
+    "Photosynthesis",
+    "Evolution",
+    "Climate change",
+    "DNA",
+    "Vaccine",
+    "Immune system",
+    "Black hole",
+    "Solar system",
+    
+    # History & Geography
+    "World War II",
+    "Ancient Egypt",
+    "Mount Everest",
+    "Amazon River",
+    "Renaissance",
+    "Roman Empire",
+    "Great Wall of China",
+    
+    # Technology & Engineering
+    "Artificial intelligence",
+    "Computer science",
+    "Internet",
+    "Cryptocurrency",
+    "Cybersecurity",
+    
+    # Arts & Culture
+    "Jazz",
+    "Literature",
+    "Theatre",
+    
+    # Business & Economics
+    "Stock market",
+    "Supply chain",
+    "Marketing",
+    "Entrepreneurship",
+    
+    # Anime topics
     "Naruto",
     "Attack on Titan (TV series)",
     "One Piece (1999 TV series)",
     "Dragon Ball",
     "Anime",
     "Hunter X Hunter",
+    "Studio Ghibli",
+    "Manga",
 ]
+
 DATA_PATH = "data"
 
 def sanitize_filename(title):
@@ -46,13 +91,13 @@ def download_wikipedia_articles(topics, data_path=DATA_PATH):
     downloaded = []
     failed = []
     
-    print("=" * 60)
+
     print("Downloading Wikipedia Articles")
-    print("=" * 60)
+
     
     for topic in topics:
         try:
-            print(f"\n📥 Downloading: {topic}")
+            print(f"\nDownloading: {topic}")
             
             # Get the Wikipedia page
             page = wikipedia.page(topic, auto_suggest=False)
@@ -74,7 +119,6 @@ def download_wikipedia_articles(topics, data_path=DATA_PATH):
             
         except wikipedia.exceptions.DisambiguationError as e:
             print(f"Disambiguation page found for '{topic}'")
-            print(f"Options: {', '.join(e.options[:5])}")
             print(f"Skipping...")
             failed.append((topic, "Disambiguation"))
             
@@ -85,12 +129,7 @@ def download_wikipedia_articles(topics, data_path=DATA_PATH):
         except Exception as e:
             print(f"Error downloading {topic}: {str(e)}")
             failed.append((topic, str(e)))
-    
-    # Summary
-    print("\n" + "=" * 60)
-    print("SUMMARY")
-    print("=" * 60)
-    print(f"Successfully downloaded: {len(downloaded)}/{len(topics)}")
+        print(f"Successfully downloaded: {len(downloaded)}/{len(topics)}")
     print(f"Failed: {len(failed)}")
     
     if downloaded:
@@ -106,18 +145,6 @@ def download_wikipedia_articles(topics, data_path=DATA_PATH):
     return downloaded, failed
 
 if __name__ == "__main__":
-    # You can customize the topics list here
     topics = TOPICS
-    
-    print(f"Will download {len(topics)} Wikipedia articles to '{DATA_PATH}/'")
-    response = input("Continue? (y/n): ")
-    
-    if response.lower() == 'y':
-        downloaded, failed = download_wikipedia_articles(topics)
-        print(f"\nDone! Check the '{DATA_PATH}/' folder for the downloaded articles.")
-        print("\nNext steps:")
-        print("1. Review the downloaded articles")
-        print("2. Run: python create_database.py")
-        print("3. Test with: python query_data.py 'your query' --hybrid")
-    else:
-        print("Cancelled.")
+    downloaded, failed = download_wikipedia_articles(topics)
+    print(f"\nDone. Check '{DATA_PATH}/' folder for the downloaded articles.")

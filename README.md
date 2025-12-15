@@ -1,277 +1,262 @@
 # Simple RAG System
 
-A simple, open-source Retrieval-Augmented Generation (RAG) system that allows you to query your documents using natural language. Built with LangChain, ChromaDB, and Ollama for a fully local solution.
+A local, open-source Retrieval-Augmented Generation (RAG) system with hybrid search capabilities. Built with LangChain, ChromaDB, and Ollama.
 
-## Features
+## Table of Contents
 
-- 📄 **Multi-format Support**: Loads PDF and Markdown files from your data directory
-- 🔍 **Hybrid Search**: Combines semantic (vector) and keyword/lexical (BM25) search for better retrieval
-- 🤖 **Local LLM**: Powered by Ollama for completely offline operation
-- 💾 **Persistent Storage**: ChromaDB vector database for efficient similarity search
-- 🔄 **Incremental Updates**: Automatically detects and adds new documents without rebuilding the entire database
+- [Quick Start](#quick-start)
+- [Step-by-Step Overview](#step-by-step-overview)
+  - [Step 1: Setup & Data](#step-1-setup--data)
+  - [Step 2: Embeddings & Storage](#step-2-embeddings--storage)
+  - [Step 3: Hybrid Retriever](#step-3-hybrid-retriever)
+  - [Step 4: LLM Generation](#step-4-llm-generation)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
 
-## Tech Stack
+## Quick Start
 
-- **Embeddings**: `BAAI/bge-small-en-v1.5` (HuggingFace) - High-quality, open-source embedding model
-- **Vector Database**: ChromaDB with cosine distance indexing
-- **Keyword Search**: BM25 algorithm for exact term matching
-- **LLM**: Ollama (supports any Ollama model)
-- **Framework**: LangChain
-
-## Prerequisites
-
-- Python 3.8+
-- An Ollama model pulled (e.g., `ollama pull llama3:8b`)
-
-## Installation
-
-1. Clone the repository:
 ```bash
+# Clone and setup
 git clone https://github.com/gustavo30rocha/simple-rag.git
 cd simple-rag
-```
-
-2. Create a virtual environment:
-```bash
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
-3. Install dependencies:
-```bash
+# Install dependencies
 pip install langchain langchain-community langchain-chroma langchain-huggingface langchain-ollama chromadb sentence-transformers pypdf "unstructured[md]" rank-bm25 wikipedia
-```
 
-4. Pull an Ollama model (if not already done):
-```bash
+# Pull Ollama model 
 ollama pull llama3:8b
+
+# Prepare documents and create database
+python scrape_wikipedia.py # Optional: download test articles
+python create_database.py # Add new documents incrementally
+python create_database.py --clear # Clear the database
+
+# Query with hybrid search
+python query_data.py "Your question" --hybrid
 ```
 
-## Project Structure
+## Step-by-Step Overview
 
+- **Step 1: Setup & Data** — Load PDF/Markdown files; chunk with overlap; generate unique IDs
+- **Step 2: Embeddings & Storage** — Generate embeddings; store in ChromaDB; build BM25 index
+- **Step 3: Hybrid Retriever** — Combine vector (dense) with BM25 (sparse); return top K
+- **Step 4: LLM Generation** — Generate answers grounded in retrieved context
+
+### Step 1: Setup & Data
+
+**Design Rationale**: We use LangChain's document loaders for ingestion to leverage proven, well-maintained parsers while keeping the pipeline straightforward and extensible.
+
+**Document Loading**:
+- **PDF**: `PyPDFDirectoryLoader` recursively loads PDFs from `data/` directory
+- **Markdown**: `DirectoryLoader` with `glob="*.md"` pattern, recursive search
+- **Metadata**: Preserves `source` (file path) and `page` (page number for PDFs)
+
+**Text Chunking**:
+- **Splitter**: `RecursiveCharacterTextSplitter`
+- **Parameters**: `chunk_size=1000` characters, `chunk_overlap=150` characters
+
+**Chunk ID Generation**:
+- **Format**: `{source}:{page}:{chunk_index}`
+- **Example**: `data/document.pdf:0:0` (first chunk of first page)
+- **Purpose**: Enables incremental updates (only adds new chunks by ID)
+
+**Output**: List of `Document` objects with content and metadata (source, page, id)
+
+### Step 2: Embeddings & Storage
+
+**Embedding Model**: `BAAI/bge-small-en-v1.5`
+- **Dimensions**: 384
+- **Why This Model**: Trained specifically for retrieval tasks; better semantic understanding than general-purpose models; efficient size
+- **Alternative Models**: `sentence-transformers/all-mpnet-base-v2` (better quality, 768 dims), `BAAI/bge-base-en-v1.5` (larger version)
+
+**Vector Storage (ChromaDB)**:
+- **Distance Metric**: Cosine distance (configured via `collection_metadata={"hnsw:space": "cosine"}`)
+- **Persistence**: Stores in `chroma/` directory
+- **Note**: ChromaDB returns cosine **distance** (0-2, lower = more similar), not similarity
+
+**BM25 Index Building**:
+- **Algorithm**: BM25Okapi from `rank-bm25`
+- **Tokenization**: Simple regex `\b\w+\b` on lowercase text (used for testing purposes)
+- **Storage**: Saves index to `chroma/bm25_index.pkl` and document references to `chroma/bm25_docs.pkl`
+
+**Incremental Updates**:
+- Checks existing chunk IDs in database
+- Only adds chunks with new IDs
+- Rebuilds BM25 index with all chunks (old + new) to keep it synchronized
+
+**Artifacts**:
+- `chroma/` directory with ChromaDB database
+- `chroma/bm25_index.pkl` (BM25 index)
+- `chroma/bm25_docs.pkl` (document references)
+
+### Step 3: Hybrid Retriever
+
+**Design Rationale**: After testing various retrieval approaches, we selected a hybrid method that merges semantic understanding with keyword matching. This dual-strategy approach addresses the limitations of single-method retrieval systems.
+
+**Why Not Dense-Only?**
+While vector embeddings excel at understanding semantic relationships and context, they struggle with:
+- Exact keyword matching (e.g., searching for "Python" may return snake-related content)
+- Technical terms, symbols, and rare entity names
+- Queries requiring precise lexical matches
+
+A pure dense retriever lacks a direct path for keyword-based recall, which limits precision on technical queries without additional re-ranking layers.
+
+**Solution: Hybrid Approach**
+Combine two complementary retrieval methods:
+- **Dense (Vector) Search**: Uses `BAAI/bge-small-en-v1.5` embeddings to find semantically similar content
+- **Sparse (BM25) Search**: Performs keyword-based matching on raw text
+
+The final relevance score is a weighted combination: `final_score = α × dense_score + (1−α) × sparse_score`, where `α` is controlled via `--hybrid-weight`.
+
+**Benefits**:
+- Captures both conceptual similarity and exact term matches
+- More robust across diverse query types (natural language vs. technical terms)
+- Tunable balance between semantic and keyword matching
+
+**Implementation**:
+
+1. **BM25 Search**:
+   - Tokenizes query: `tokenize(query_text)` → lowercase words
+   - Scores all documents: `bm25.get_scores(query_tokens)` → raw BM25 scores
+   - Normalizes scores: min-max normalization to 0-1 range
+
+2. **Vector Search**:
+   - Embeds query using same embedding model
+   - Retrieves top K×3 documents via cosine distance (retrieves 3× more than requested to ensure good BM25 matches aren't missed during merging)
+   - Converts distance to similarity: `similarity = 1 - distance`
+   - Normalizes scores: min-max normalization to 0-1 range
+
+3. **Score Fusion**:
+   - Creates score maps: `{document_content: score}` for fast lookup
+   - Combines: `combined_score = (hybrid_weight × vector_score) + ((1 - hybrid_weight) × bm25_score)`
+   - **Weight Interpretation**:
+     - `0.0` = Pure BM25 (keyword-only)
+     - `1.0` = Pure vector (semantic-only)
+     - `0.5` = Balanced
+
+4. **Result Merging**:
+   - Adds all vector results with combined scores
+   - Adds top BM25 results not in vector results
+   - Sorts by combined score, returns top K
+
+**Score Normalization**:
+- Both vector and BM25 scores use min-max normalization separately
+- Formula: `normalized = (score - min) / (max - min)`
+- Handles edge cases: empty lists, identical scores (returns zeros)
+- Ensures fair combination of scores from different scales
+
+**Chunking Defaults**:
+| Parameter | Default | Rationale |
+|-----------|---------|-----------|
+| `chunk_size` | 1000 characters | Balance between context and granularity |
+| `chunk_overlap` | 150 characters | Prevents information loss at boundaries |
+
+**Fallback Behavior**:
+- If BM25 index not found, falls back to vector-only search
+- Prints warning message to user
+
+### Step 4: LLM Generation
+
+**Goal**: Generate final answers grounded in retrieved context.
+
+**Model**: Ollama (default: `llama3:8b`, configurable via `--model`)
+
+**Prompt Template**:
+```text
+You are a helpful assistant that answers questions based on the provided context documents.
+
+Use the following pieces of context to answer the question. If you don't know the answer based on the context alone, say that you don't have enough information in the provided documents to answer the question.
+
+Context:
+{context}
+
+Question: {question}
+
+Provide a clear, concise, and accurate answer based solely on the context provided above. If the context contains multiple relevant pieces of information, synthesize them into a coherent response. If the context does not contain enough information to answer the question, say "I don't have enough information in the provided documents to answer this question."
 ```
-simple-rag/
-├── data/                  # Place your PDF and Markdown files here
-│   ├── *.pdf
-│   ├── *.md
-│   └── subdirectories/   # Supports recursive loading
-├── chroma/               # ChromaDB database (auto-generated)
-│   ├── bm25_index.pkl   # Pre-built BM25 index (auto-generated)
-│   └── bm25_docs.pkl    # Document references for BM25 (auto-generated)
-├── create_database.py    # Script to build/update the vector database
-├── query_data.py         # Script to query your documents
-├── scrape_wikipedia.py   # Script to download Wikipedia articles
-└── README.md
-```
 
-## Usage
+**Process**:
+1. Formats top K documents as context
+2. Creates prompt with context and question
+3. Invokes Ollama LLM with `temperature=0` (deterministic)
+4. Returns answer with source citations (unique source files)
 
-### 1. Prepare Your Documents
-
-You can either:
-- **Option A**: Place your PDF and Markdown files in the `data/` directory
-- **Option B**: Use the Wikipedia scraper to download articles for testing
-
-#### Option A: Manual Document Placement
-
-Place your PDF and Markdown files in the `data/` directory. The system will recursively search all subdirectories.
-
-```
-data/
-├── document1.pdf
-├── document2.md
-└── subfolder/
-    └── document3.pdf
-```
-
-#### Option B: Download Wikipedia Articles
-
-Use the included scraper to quickly build a test dataset:
-
-```bash
-python scrape_wikipedia.py
-```
-
-This will download Wikipedia articles specified in the `TOPICS` list and save them as Markdown files in the `data/` directory. You can customize the topics in `scrape_wikipedia.py`.
-
-### 2. Create the Database
-
-Run the database creation script to process and index your documents:
-
-```bash
-python create_database.py
-```
-
-This will:
-- Load all PDF and Markdown files from the `data/` directory
-- Split documents into chunks (1000 characters with 150 character overlap)
-- Generate embeddings using BAAI/bge-small-en-v1.5
-- Build a BM25 keyword search index
-- Store everything in ChromaDB and save BM25 index to disk
-- Only add new documents if the database already exists (incremental updates)
-
-### 3. Query Your Documents
-
-Ask questions about your documents:
-
-```bash
-python query_data.py "Your question here"
-```
-
-**Examples:**
-```bash
-# Basic query (vector search only)
-python query_data.py "What type of evidence can we find in operating systems?"
-
-# Hybrid search (combines vector + keyword search)
-python query_data.py "Python programming" --hybrid
-
-# Hybrid search with custom weight (70% vector, 30% keyword)
-python query_data.py "Python machine learning" --hybrid --hybrid-weight 0.7
-
-# Use a different Ollama model
-python query_data.py "Explain file carving techniques" --model llama3.1
-
-# Retrieve more documents
-python query_data.py "How does memory forensics work?" --k 10
-```
-
-### Command-Line Options
-
-**`query_data.py` options:**
-- `query_text` (required): Your question
-- `--model`: Ollama model to use (default: `llama3:8b`)
-- `--k`: Number of documents to retrieve (default: `5`)
-- `--hybrid`: Enable hybrid search (combines vector + keyword search)
-- `--hybrid-weight`: Weight for hybrid search (0.0 = only keyword, 1.0 = only vector, default: `0.5`)
-
-## How It Works
-
-### Vector Search (Default)
-
-1. **Document Processing**: Documents are split into manageable chunks (1000 chars with 150 char overlap)
-2. **Embedding Generation**: Each chunk is converted to a vector using BAAI/bge-small-en-v1.5
-3. **Vector Storage**: Embeddings are stored in ChromaDB
-4. **Query Processing**: 
-   - Your question is embedded using the same model
-   - ChromaDB finds the most similar document chunks using cosine distance
-   - Cosine distance (0-2 range) is converted to cosine similarity (-1 to 1), then normalized to (0-1)
-   - Formula: `similarity = 1 - distance`, then `normalized = (similarity + 1) / 2`
-5. **Response Generation**: The LLM generates an answer based on the retrieved context
-
-### Hybrid Search (Optional)
-
-When `--hybrid` is enabled, the system combines two search methods:
-
-1. **Vector Search (Dense)**: Semantic similarity using embeddings (finds conceptually similar content)
-2. **BM25 Search (Sparse)**: Keyword matching using the BM25 algorithm (finds exact term matches)
-3. **Score Combination**: Both scores are normalized to 0-1 range using min-max normalization, then combined:
-   - `combined_score = (hybrid_weight × vector_score) + ((1 - hybrid_weight) × bm25_score)`
-4. **Result Merging**: Top results from both methods are merged and re-ranked by combined score
-5. **Response Generation**: The LLM generates an answer based on the hybrid-retrieved context
-
-**Benefits of Hybrid Search:**
-- Better for queries with exact keywords (e.g., "Python", "REST API")
-- Still maintains semantic understanding
-- Combines the strengths of both approaches
-- Configurable weighting between semantic and keyword matching
+**Source Attribution**:
+- Extracts sources from document metadata
+- Removes duplicates using `set()` (same document may appear in multiple chunks)
 
 ## Configuration
 
 ### Embedding Model
 
-The embedding model is configured in both `create_database.py` and `query_data.py`:
-
+Change in both `create_database.py` and `query_data.py`:
 ```python
-embeddings = HuggingFaceEmbeddings(
-    model_name="BAAI/bge-small-en-v1.5"
-)
+embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 ```
 
-You can change this to other models like:
-- `sentence-transformers/all-mpnet-base-v2` (better quality, larger)
-- `BAAI/bge-base-en-v1.5` (larger, better quality)
+### Chunking
 
-### Chunking Strategy
-
-Chunking parameters in `create_database.py`:
-
+In `create_database.py`:
 ```python
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,      # Characters per chunk
-    chunk_overlap=150,     # Overlap between chunks
+    chunk_overlap=150,    # Overlap between chunks
 )
 ```
 
-### ChromaDB Configuration
+### ChromaDB
 
-The database uses cosine distance for indexing (configured in `create_database.py`):
-
+Uses cosine distance (configured in `create_database.py`):
 ```python
 collection_metadata={"hnsw:space": "cosine"}
 ```
 
-**Note**: ChromaDB uses cosine **distance** (0-2 range, where lower = more similar), not cosine similarity. The query script automatically converts distance to similarity and normalizes it to a 0-1 range for easier interpretation.
+### Command-Line Options
 
-## Score Normalization
+**`query_data.py`:**
+- `query_text` (required): Your query
+- `--model`: Ollama model (default: `llama3:8b`)
+- `--k`: Number of documents (default: `5`)
+- `--hybrid`: Enable hybrid search
+- `--hybrid-weight`: Weight 0.0-1.0 (default: `0.7`)
 
-The system converts cosine distance to normalized similarity scores:
+**Examples:**
+```bash
+# Vector-only
+python query_data.py "What is Python?"
 
-1. **Cosine Distance** (from ChromaDB): Range 0-2, where:
-   - 0 = identical vectors
-   - 2 = opposite vectors
-   - Lower distance = more similar
+# Hybrid (balanced)
+python query_data.py "Python programming" --hybrid
 
-2. **Convert to Cosine Similarity**: `similarity = 1 - distance`
-   - Range becomes -1 to 1
-   - 1 = identical, 0 = orthogonal, -1 = opposite
+# Hybrid (more semantic)
+python query_data.py "How does ML work?" --hybrid --hybrid-weight 0.7
 
-3. **Normalize to 0-1**: `normalized = (similarity + 1) / 2`
-   - Range becomes 0 to 1
-   - 1 = most similar, 0 = least similar
-
-## Features in Detail
-
-### Hybrid Search
-
-Hybrid search combines semantic (vector) and keyword (BM25) retrieval for improved results:
-
-- **When to use**: Queries with specific terms, technical terminology, or when you need both semantic understanding and exact keyword matching
-- **BM25 Index**: Built once during database creation and saved to disk for fast loading during queries
-- **Normalization**: Both vector and BM25 scores use min-max normalization to ensure fair combination
-- **Weighting**: Adjust `--hybrid-weight` to balance between semantic (1.0) and keyword (0.0) search
-
-### Incremental Updates
-
-The system automatically detects new documents and only adds them to the database, avoiding full rebuilds. Chunk IDs are generated based on source file, page number, and chunk index (format: `source:page:chunk_index`). The BM25 index is automatically rebuilt when new documents are added.
+# More documents
+python query_data.py "Explain databases" --k 10
+```
 
 ## Troubleshooting
 
-### "Unable to find matching results"
-- Try increasing `--k` to retrieve more documents
-- Check that your database was created successfully
-- Verify your query is related to the document content
+**BM25 index not found**: Run `python create_database.py` to build it. System falls back to vector-only if missing.
 
-### Ollama connection errors
-- Ensure Ollama is running: `ollama serve`
-- Verify the model is pulled: `ollama list`
-- Pull the model if needed: `ollama pull llama3:8b`
+**Low retrieval quality**: Try `--hybrid --hybrid-weight 0.3` (more keyword-focused) or increase `--k`.
 
-### Low scores
-- The embedding model might not match your domain
-- Consider using a larger embedding model
-- Adjust chunk size/overlap for better context
+**Ollama errors**: Ensure Ollama is running (`ollama serve`) and model is pulled (`ollama list`).
 
-### BM25 index not found (hybrid search)
-- Run `python create_database.py` to build the BM25 index
-- Ensure the `chroma/` directory exists and contains `bm25_index.pkl` and `bm25_docs.pkl`
-- The system will fall back to vector-only search if the index is missing
+**Documents not found**: Verify files are in `data/` with `.pdf` or `.md` extensions.
 
-## Future Improvements
+## Tech Stack
 
-Potential enhancements:
-- Multi-query retrieval for better coverage
+- **Embeddings**: `BAAI/bge-small-en-v1.5`
+- **Vector DB**: ChromaDB
+- **Keyword Search**: BM25 algorithm (`rank-bm25`)
+- **LLM**: Ollama (any model)
+- **Framework**: LangChain
+
+## Possible Future Improvements
+
 - Reranking with cross-encoders
-- Better prompt engineering
-- Response streaming
-
+- Query expansion techniques
+- Metadata filtering

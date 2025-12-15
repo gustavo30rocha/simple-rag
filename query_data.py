@@ -61,7 +61,7 @@ def tokenize(text):
     tokens = re.findall(r'\b\w+\b', text.lower())
     return tokens
 
-def hybrid_search(db, query_text, k, hybrid_weight=0.5):
+def hybrid_search(db, query_text, k, hybrid_weight=0.7):
     """
     Perform hybrid search combining vector similarity and BM25 keyword search.
     Uses pre-built BM25 index from disk.
@@ -86,7 +86,7 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.5):
         vector_scores_normalized = _normalize(vector_similarities)
         return [(doc, score) for (doc, _), score in zip(raw_results, vector_scores_normalized)]
     
-    print("Loading BM25 index...")
+    #print("Loading BM25 index...")
     with open(BM25_INDEX_PATH, 'rb') as f:
         bm25 = pickle.load(f)
     
@@ -153,9 +153,74 @@ def hybrid_search(db, query_text, k, hybrid_weight=0.5):
     
     # Return top k results
     return results[:k]
+
+def query_rag(
+    question: str,
+    model: str = "llama3:8b",
+    k: int = 5,
+    hybrid: bool = False,
+    hybrid_weight: float = 0.7,
+    return_sources: bool = False
+):
+    """
+    Query the RAG system and return the answer.
+    
+    Args:
+        question: The question to ask
+        model: Ollama model to use (default: llama3:8b)
+        k: Number of documents to retrieve (default: 5)
+        hybrid: Enable hybrid search (default: False)
+        hybrid_weight: Weight for hybrid search, 0.0 = only BM25, 1.0 = only vector (default: 0.7)
+        return_sources: If True, return (answer, sources) tuple; if False, return just answer (default: False)
+    
+    Returns:
+        str or tuple: The answer text, or (answer, sources) if return_sources=True
+    """
+    embedding_function = HuggingFaceEmbeddings(
+        model_name="BAAI/bge-small-en-v1.5"
+    )
+    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
+
+    # Perform search based on mode
+    if hybrid:
+        # Hybrid search: combine vector + keyword search
+        results = hybrid_search(db, question, k, hybrid_weight)
+    else:
+        # Standard vector search
+        raw_results = db.similarity_search_with_score(question, k=k)
+        # Convert distances to similarities, then normalize
+        vector_distances = [score for _, score in raw_results]
+        vector_similarities = [distance_to_similarity(dist) for dist in vector_distances]
+        vector_scores_normalized = _normalize(vector_similarities)
+        results = [
+            (doc, score)
+            for (doc, _), score in zip(raw_results, vector_scores_normalized)
+        ]
+
+    # Check if we got any results
+    if len(results) == 0:
+        answer = "I don't have enough information in the provided documents to answer this question."
+        if return_sources:
+            return (answer, set())
+        return answer
+    
+    # Format the retrieved documents as context
+    context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
+
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    prompt = prompt_template.format(context=context_text, question=question)
+
+    model_instance = ChatOllama(model=model, temperature=0)
+    response = model_instance.invoke(prompt)
+    
+    sources = [doc.metadata["source"] for doc, _score in results]
+    sources = set(sources)  # Removes duplicates
+    
+    if return_sources:
+        return (response.content, sources)
+    return response.content
     
 def main():
-    # Create CLI.
     parser = argparse.ArgumentParser()
     parser.add_argument("query_text", type=str, help="The query text.")
     parser.add_argument(
@@ -178,51 +243,21 @@ def main():
     parser.add_argument(
         "--hybrid-weight",
         type=float,
-        default=0.5,
-        help="Weight for hybrid search: 0.0 = only keyword, 1.0 = only vector (default: 0.5)"
+        default=0.7,
+        help="Weight for hybrid search: 0.0 = only keyword, 1.0 = only vector (default: 0.7)"
     )
     args = parser.parse_args()
-    query_text = args.query_text
 
-    embedding_function = HuggingFaceEmbeddings(
-        model_name="BAAI/bge-small-en-v1.5"
+    answer, sources = query_rag(
+        question=args.query_text,
+        model=args.model,
+        k=args.k,
+        hybrid=args.hybrid,
+        hybrid_weight=args.hybrid_weight,
+        return_sources=True
     )
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embedding_function)
-
-    # Perform search based on mode
-    if args.hybrid:
-        # Hybrid search: combine vector + keyword search
-        results = hybrid_search(db, query_text, args.k, args.hybrid_weight)
-    else:
-        # Standard vector search
-        raw_results = db.similarity_search_with_score(query_text, k=args.k)
-        # Convert distances to similarities, then normalize
-        vector_distances = [score for _, score in raw_results]
-        vector_similarities = [distance_to_similarity(dist) for dist in vector_distances]
-        vector_scores_normalized = _normalize(vector_similarities)
-        results = [
-            (doc, score)
-            for (doc, _), score in zip(raw_results, vector_scores_normalized)
-        ]
-
-    # Check if we got any results
-    if len(results) == 0:
-        return
     
-    # Format the retrieved documents as context to later use in the prompt
-    context_text = "\n\n---\n\n".join([doc.page_content for doc, _score in results])
-    #print(f"Context: {context_text}")
-
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context= context_text, question= query_text)
-    #print(f"Prompt: {prompt}")
-
-    model = ChatOllama(model=args.model, temperature=0)
-    response = model.invoke(prompt)
-    sources = [doc.metadata["source"] for doc, _score in results]
-    sources = set(sources) # Removes duplicates for cleaner output
-    formatted_response = f"Response: {response.content}\nSources: {sources}"
-    
+    formatted_response = f"Response: {answer}\nSources: {sources}"
     print(formatted_response)
 
 if __name__ == "__main__":
