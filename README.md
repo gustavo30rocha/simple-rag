@@ -2,6 +2,8 @@
 
 A local, open-source Retrieval-Augmented Generation (RAG) system with hybrid search capabilities. Built with LangChain, ChromaDB, and Ollama.
 
+**Note**: This system was built for study purposes and educational exploration of RAG techniques.
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
