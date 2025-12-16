@@ -67,7 +67,6 @@ def split_text(documents):
     )
 
     chunks = text_splitter.split_documents(documents)
-    print(f"Split {len(documents)} documents into {len(chunks)} chunks")
     return chunks
 
 def tokenize(text):
